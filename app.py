@@ -466,9 +466,11 @@ def comparar_vwap_plotly(df, description1, description2, tickers):
     return fig, None
 
 # Função para gerar resumo OHLC
+# Função para gerar resumo OHLC
 def gerar_resumo_ohlc(df, tickers):
     """
-    Gera um DataFrame com o resumo de OHLC para o último dia de negociação.
+    Gera um DataFrame com o resumo de OHLC para o último dia de negociação,
+    sem incluir o cálculo de tendência.
     """
     ultimo_dia = df.index.max().date()
     df_ultimo_dia = df[df.index.date == ultimo_dia]
@@ -482,8 +484,14 @@ def gerar_resumo_ohlc(df, tickers):
     
     # Calcular variação diária
     dia_anterior = ultimo_dia - pd.Timedelta(days=1)
-    dia_anterior_str = dia_anterior.strftime('%Y-%m-%d')
     df_dia_anterior = df[df.index.date == dia_anterior]
+    
+    # Se não houver dados do dia anterior, tente encontrar o dia de negociação mais recente
+    if df_dia_anterior.empty:
+        dias_anteriores = sorted(list(set(df[df.index.date < ultimo_dia].index.date)), reverse=True)
+        if dias_anteriores:
+            dia_anterior = dias_anteriores[0]
+            df_dia_anterior = df[df.index.date == dia_anterior]
     
     resumo_dia_anterior = df_dia_anterior[df_dia_anterior['originOperationType'] == 'Match'].groupby('productId')['unitPrice'].agg(['last'])
     resumo_dia_anterior = resumo_dia_anterior.rename(columns={'last': 'close_anterior'})
@@ -494,28 +502,18 @@ def gerar_resumo_ohlc(df, tickers):
     # Calcular variação
     resumo_ohlc['variacao'] = (resumo_ohlc['close'] - resumo_ohlc['close_anterior']) / resumo_ohlc['close_anterior']
     
-    # Adicionar média móvel 10 e 20 dias
-    for product_id in resumo_ohlc.index:
-        df_produto = df[df['productId'] == product_id]['unitPrice']
-        if len(df_produto) >= 10:
-            resumo_ohlc.loc[product_id, 'MA10'] = df_produto.rolling(window=10).mean().iloc[-1]
-        if len(df_produto) >= 20:
-            resumo_ohlc.loc[product_id, 'MA20'] = df_produto.rolling(window=20).mean().iloc[-1]
-    
-    # Definir tendência com base nas médias móveis
-    resumo_ohlc['tendencia'] = 'Neutra'
-    resumo_ohlc.loc[(resumo_ohlc['close'] > resumo_ohlc['MA10']) & (resumo_ohlc['close'] > resumo_ohlc['MA20']), 'tendencia'] = 'Alta'
-    resumo_ohlc.loc[(resumo_ohlc['close'] < resumo_ohlc['MA10']) & (resumo_ohlc['close'] < resumo_ohlc['MA20']), 'tendencia'] = 'Baixa'
+    # Note que todo o cálculo de média móvel e tendência foi removido
     
     return resumo_ohlc, ultimo_dia
 
+# Função para criar uma tabela interativa com Plotly
 # Função para criar uma tabela interativa com Plotly
 def criar_tabela_interativa(resumo_ohlc, ultimo_dia):
     if resumo_ohlc.empty:
         return None, "Não há dados para exibir."
     
     # Preparar os dados para a tabela
-    df_table = resumo_ohlc[['description', 'open', 'high', 'low', 'close', 'variacao', 'tendencia']].copy()
+    df_table = resumo_ohlc[['description', 'open', 'high', 'low', 'close', 'variacao']].copy()
     df_table.reset_index(inplace=True)
     df_table.rename(columns={'index': 'productId'}, inplace=True)
     
@@ -528,17 +526,10 @@ def criar_tabela_interativa(resumo_ohlc, ultimo_dia):
     # Formatar a variação como percentual
     df_table['variacao'] = df_table['variacao'].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "N/A")
     
-    # Definir cores para tendência
-    tendencia_colors = {
-        'Alta': 'green',
-        'Baixa': 'red',
-        'Neutra': 'gray'
-    }
-    
     # Criar tabela com Plotly
     fig = go.Figure(data=[go.Table(
         header=dict(
-            values=['Produto', 'Abertura', 'Máxima', 'Mínima', 'Fechamento', 'Variação', 'Tendência'],
+            values=['Produto', 'Abertura', 'Máxima', 'Mínima', 'Fechamento', 'Variação'],
             fill_color='lightgray',
             align='center',
             font=dict(size=12)
@@ -550,8 +541,7 @@ def criar_tabela_interativa(resumo_ohlc, ultimo_dia):
                 df_table['high'],
                 df_table['low'],
                 df_table['close'],
-                df_table['variacao'],
-                df_table['tendencia']
+                df_table['variacao']
             ],
             align='center',
             font_size=11,
@@ -562,8 +552,7 @@ def criar_tabela_interativa(resumo_ohlc, ultimo_dia):
                 'white',
                 'white',
                 'white',
-                ['green' if '-' not in val else 'red' for val in df_table['variacao']],
-                [tendencia_colors[val] for val in df_table['tendencia']]
+                ['green' if '-' not in val else 'red' for val in df_table['variacao']]
             ],
             font_color=[
                 'black',
@@ -571,7 +560,6 @@ def criar_tabela_interativa(resumo_ohlc, ultimo_dia):
                 'black',
                 'black',
                 'black',
-                'white',
                 'white'
             ]
         )
